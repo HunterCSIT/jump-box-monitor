@@ -102,6 +102,9 @@ class SystemResourceUsageAlert(BaseAlert):
     def to_key_name(self):
         return self.resource_name
 
+    def __str__(self):
+        return f"<ResourceAlert {self.resource_name}>"
+
 
 class ProcessAlert(BaseAlert):
     def __init__(
@@ -131,6 +134,9 @@ class ProcessAlert(BaseAlert):
 
     def to_key_name(self):
         return md5sum(f"{self.process_id}-{self.user_uid}")
+
+    def __str__(self):
+        return f"<ProcessAlert {self.process_id}>"
 
 
 # # Check for resource alerts # # # # # #
