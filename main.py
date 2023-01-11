@@ -1,7 +1,9 @@
 
+from abc import ABC, abstractmethod
 import argparse
 import json
 import logging
+import hashlib
 import os
 import os.path
 import pathlib
@@ -15,8 +17,18 @@ import typing
 BASE_DIR = pathlib.Path(__file__).parent.absolute()
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
+ALERT_SNOOZE_TIME_SECONDS = 60 * 60 * 6
+
+# Resource usage max thresholds
+ALERT_MAX_MEMORY_USAGE_PERCENT = 0.33
+ALERT_MAX_CPU_USAGE_PERCENT = 0.33
+ALERT_MAX_DISK_USAGE_PERCENT = 0.33
+
 
 # # Data caching logic # # # # # #
+
+def md5sum(value: str):
+    return hashlib.md5(value.encode()).hexdigest()
 
 def now_ts() -> int:
     return round(time.time())
@@ -70,7 +82,12 @@ class ResourceNames:
     CPU = "CPU"
     DISK = "DISK"
 
-class SystemResourceUsageAlert:
+class BaseAlert(ABC):
+    @abstractmethod
+    def to_key_name(self) -> str:
+        pass
+
+class SystemResourceUsageAlert(BaseAlert):
 
     def __init__(
         self,
@@ -82,9 +99,11 @@ class SystemResourceUsageAlert:
         self.resource_usage = resource_usage
         self.resource_capacity = resource_capacity
 
+    def to_key_name(self):
+        return self.resource_name
 
 
-class ProcessAlert:
+class ProcessAlert(BaseAlert):
     def __init__(
         self,
         process_id: str,
@@ -110,10 +129,12 @@ class ProcessAlert:
         except ShellError:
             self.user_name = "UNKNOWN"
 
-
+    def to_key_name(self):
+        return md5sum(f"{self.process_id}-{self.user_uid}")
 
 
 # # Check for resource alerts # # # # # #
+
 def _get_memory_usage() -> typing.List[int]:
     total_usage_row = run_shell_command("free", "-t", "-m").split("\n")[-1]
     if not total_usage_row.startswith("Total: "):
@@ -136,12 +157,13 @@ def _check_cpu_usage() -> float:
 
 def get_system_resource_usage_alerts(logger) -> typing.List[SystemResourceUsageAlert]:
     # check memory usage
-    [total, used, free] = _get_memory_usage()
-    logger.debug(f"memory usage {[total, used, free]}")
+    [total_memory, used_memory, free_memory] = _get_memory_usage()
+    logger.debug(f"memory usage {[total_memory, used_memory, free_memory]}")
 
     # CPU usage
     cpu_useage = _check_cpu_usage()
     logger.debug(f"cpu usage % {cpu_useage}")
+
 
 
 # # Check for processes alerts # # # # # #
@@ -150,7 +172,9 @@ def get_processes_alerts(logger) -> typing.List[ProcessAlert]:
     pass
 
 
-## Script Entry Point
+
+# # # Script Entry Point # # # # # # # # #
+
 def main(debug: bool, logger: logging.Logger):
     resource_alerts = get_system_resource_usage_alerts(logger)
     process_alerts = get_processes_alerts(logger)
