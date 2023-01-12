@@ -194,7 +194,12 @@ def get_system_resource_usage_alerts(logger) -> typing.List[SystemResourceUsageA
 # # Check for processes alerts # # # # # #
 
 def get_processes_alerts(logger) -> typing.List[ProcessAlert]:
-    return []
+    alerts = []
+    for proc in psutil.process_iter():
+        pid = proc.pid
+        username = proc.username()
+
+    return alerts
 
 
 
