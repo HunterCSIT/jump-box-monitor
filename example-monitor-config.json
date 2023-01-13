@@ -16,5 +16,9 @@
         "sshd",
         "ssh",
         "ssh-keygen"
-    ]
+    ],
+    "discord_bot": {
+        "channel_id": null,
+        "bot_token": null
+    }
 }

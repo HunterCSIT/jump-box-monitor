@@ -12,12 +12,13 @@ import itertools
 import os
 import os.path
 import pathlib
-import re
 import subprocess
 import sys
 import time
 import traceback
 import typing
+import urllib.request
+import uuid
 
 import psutil
 
@@ -25,6 +26,7 @@ import psutil
 
 BASE_DIR = pathlib.Path(__file__).parent.absolute()
 DATA_DIR = os.path.join(BASE_DIR, "data")
+REPORTS_DIR = os.path.join(BASE_DIR, "reports")
 PROD_LOG_PATH = os.path.join(BASE_DIR, "warnings.log")
 CONFIG_FILE_PATH = os.path.join(BASE_DIR, "monitor-config.json")
 
@@ -57,6 +59,23 @@ def validate_config(config: typing.Dict):
     if "process_names_to_ignore" not in config or not isinstance(config['process_names_to_ignore'], list):
         raise InvalidConfigError(f'expected field process_names_to_ignore to be a list')
 
+    if "discord_bot" in config:
+        if "channel_id" not in config["discord_bot"]:
+            raise InvalidConfigError(
+                "discord_bot object expected key channel_id"
+            )
+        if not config["discord_bot"]['channel_id'] or len(config["discord_bot"]['channel_id']) < 5:
+            raise InvalidConfigError(
+                "discord_bot object contains invalid key channel_id"
+            )
+        if "bot_token" not in config["discord_bot"]:
+            raise InvalidConfigError(
+                "discord_bot object expected key bot_token"
+            )
+        if not config["discord_bot"]['bot_token'] or len(config["discord_bot"]['bot_token']) < 5:
+            raise InvalidConfigError(
+                "discord_bot object contains invalid key bot_token"
+            )
 
 # # Data caching logic # # # # # #
 
@@ -256,6 +275,25 @@ def get_processes_alerts(logger, config) -> typing.List[ProcessAlert]:
     return alerts
 
 
+def http_post(url: str, data: typing.Dict, headers: typing.Dict = {}):
+    req = urllib.request.Request(url)
+    for k, v in headers.items():
+        req.add_header(k, v)
+    jsondata = json.dumps(data)
+    jsondataasbytes = jsondata.encode('utf-8') # needs to be bytes
+    req.add_header('Content-Length', len(jsondataasbytes))
+    return urllib.request.urlopen(req, jsondataasbytes)
+
+def create_discord_message(message: str, bot_token: str, channel_id: str):
+    url = f"https://discordapp.com/api/channels/{channel_id}/messages"
+    headers = {
+        "Authorization": f"Bot {bot_token}",
+        "User-Agent": "myBotThing (http://some.url, v0.1)",
+        "Content-Type": "application/json"
+    }
+    payload = {"content": message}
+    http_post(url, payload, headers=headers)
+
 
 # # # Script Entry Point # # # # # # # # #
 
@@ -273,6 +311,8 @@ def main(logger: logging.Logger, config: typing.Dict) -> None:
         logger.warning(f"found {len(resource_alerts)} resource alert(s)")
     if len(process_alerts):
         logger.warning(f"found {len(process_alerts)} process alert(s)")
+
+    message_text = []
     for alert in itertools.chain(resource_alerts, process_alerts):
 
         alert_cache_key = alert.to_key_name()
@@ -291,7 +331,24 @@ def main(logger: logging.Logger, config: typing.Dict) -> None:
 
         if send_alert:
             logger.warning(f" **** SENDING ALERT **** {alert}")
-            print(alert.to_email_string())
+            message_text.append(alert.to_email_string())
+
+    if len(message_text):
+        if "discord_bot" in config:
+            logger.debug("sending discord message")
+            chunk_size = 10
+            for i in range(0, len(message_text), chunk_size):
+                create_discord_message(
+                    "***************\n".join(message_text[i: i+chunk_size]),
+                    config['discord_bot']['bot_token'],
+                    config['discord_bot']['channel_id'],
+                )
+                time.sleep(1.5)
+        else:
+            logger.debug("creating incident report file")
+            file_path = os.path.join(REPORTS_DIR, str(uuid.uuid4()))
+            with open(file_path, "w") as f:
+                f.write("***************\n".join(message_text))
 
 
 # Manage pid file
