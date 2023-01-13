@@ -1,0 +1,3 @@
+#!/bin/bash
+
+cp example-monitor-config.json monitor-config.json

@@ -25,13 +25,30 @@ import psutil
 BASE_DIR = pathlib.Path(__file__).parent.absolute()
 DATA_DIR = os.path.join(BASE_DIR, "data")
 PROD_LOG_PATH = os.path.join(BASE_DIR, "warnings.log")
+CONFIG_FILE_PATH = os.path.join(BASE_DIR, "monitor-config.json")
 
 ALERT_SNOOZE_TIME_SECONDS = 60 * 60 * 6
 
-# Resource usage max thresholds
-ALERT_MAX_MEMORY_USAGE_PERCENT = 0.33
-ALERT_MAX_CPU_USAGE_PERCENT = 0.45
-ALERT_MAX_DISK_USAGE_PERCENT = 0.33
+
+# Config validation
+class InvalidConfigError(Exception):
+    pass
+
+def validate_config(config: typing.Dict):
+    if 'max_memory_percent' not in config:
+        raise InvalidConfigError("expected config value 'max_memory_percent'")
+    if 'max_cpu_percent' not in config:
+        raise InvalidConfigError("expected config value 'max_cpu_percent'")
+    if 'max_disk_percent' not in config:
+        raise InvalidConfigError("expected config value 'max_disk_percent'")
+
+    def _validate_percent_value(v: float, name: str):
+        if not isinstance(v, float) or v < 0 or v > 1:
+            raise InvalidConfigError(f'field {v} has invalid value')
+
+    _validate_percent_value(config['max_memory_percent'], 'max_memory_percent')
+    _validate_percent_value(config['max_cpu_percent'], 'max_cpu_percent')
+    _validate_percent_value(config['max_disk_percent'], 'max_disk_percent')
 
 
 # # Data caching logic # # # # # #
@@ -45,6 +62,9 @@ def now_ts() -> int:
 class DataCacheMissError(Exception):
     pass
 
+class DataCacheKeyExpired(Exception):
+    pass
+
 def read_saved_value(key: str):
     data_file_path = os.path.join(DATA_DIR, key)
     try:
@@ -55,7 +75,7 @@ def read_saved_value(key: str):
     if data.get("expired_at"):
         if data["expired_at"] < now_ts():
             os.remove(data_file_path)
-            raise DataCacheMissError()
+            raise DataCacheKeyExpired()
     return data['payload']
 
 def write_saved_value(
@@ -156,7 +176,7 @@ class ProcessAlert(BaseAlert):
 
 # # Check for resource alerts # # # # # #
 
-def get_system_resource_usage_alerts(logger) -> typing.List[SystemResourceUsageAlert]:
+def get_system_resource_usage_alerts(logger, config) -> typing.List[SystemResourceUsageAlert]:
     # Memory
     memory_used_percent = psutil.virtual_memory().percent / 100
     logger.info(f"memory_used_percent {memory_used_percent}")
@@ -169,19 +189,19 @@ def get_system_resource_usage_alerts(logger) -> typing.List[SystemResourceUsageA
 
 
     alerts = []
-    if memory_used_percent > ALERT_MAX_MEMORY_USAGE_PERCENT:
+    if memory_used_percent > config['max_memory_percent']:
         alerts.append(SystemResourceUsageAlert(
             ResourceNames.MEMORY,
             memory_used_percent
         ))
         logger.warning(f"creating alert for MEMORY usage")
-    if cpu_useage_percent > ALERT_MAX_CPU_USAGE_PERCENT:
+    if cpu_useage_percent > config['max_cpu_percent']:
         alerts.append(SystemResourceUsageAlert(
             ResourceNames.CPU,
             cpu_useage_percent
         ))
         logger.warning(f"creating alert for CPU usage")
-    if disk_useage_percent > ALERT_MAX_DISK_USAGE_PERCENT:
+    if disk_useage_percent > config['max_disk_percent']:
         alerts.append(SystemResourceUsageAlert(
             ResourceNames.DISK,
             disk_useage_percent
@@ -193,7 +213,7 @@ def get_system_resource_usage_alerts(logger) -> typing.List[SystemResourceUsageA
 
 # # Check for processes alerts # # # # # #
 
-def get_processes_alerts(logger) -> typing.List[ProcessAlert]:
+def get_processes_alerts(logger, config) -> typing.List[ProcessAlert]:
     alerts = []
     for proc in psutil.process_iter():
         pid = proc.pid
@@ -205,12 +225,12 @@ def get_processes_alerts(logger) -> typing.List[ProcessAlert]:
 
 # # # Script Entry Point # # # # # # # # #
 
-def main(logger: logging.Logger) -> None:
+def main(logger: logging.Logger, config: typing.Dict) -> None:
     logger.debug("main method running")
 
     logger.debug("checking for alerts")
-    resource_alerts = get_system_resource_usage_alerts(logger)
-    process_alerts = get_processes_alerts(logger)
+    resource_alerts = get_system_resource_usage_alerts(logger, config)
+    process_alerts = get_processes_alerts(logger, config)
     if len(resource_alerts) == 0 and len(process_alerts) == 0:
         logger.debug("no alerts found")
         return
@@ -226,7 +246,7 @@ def main(logger: logging.Logger) -> None:
             # Check cache to see if we've sent an alert for this event recently.
             # We don't want to spam alerts.
             read_saved_value(alert_cache_key)
-        except DataCacheMissError:
+        except (DataCacheMissError, DataCacheKeyExpired):
             send_alert = True
             logger.debug(f"cache miss, writing key to cache: {alert_cache_key}")
             write_saved_value(alert_cache_key, None, ALERT_SNOOZE_TIME_SECONDS)
@@ -238,6 +258,29 @@ def main(logger: logging.Logger) -> None:
         if send_alert:
             logger.warning(f" **** SENDING ALERT **** {alert}")
 
+
+# Manage pid file
+class PIDFileExistsException(Exception):
+    pass
+
+def _get_full_pid_file_path() -> str:
+    return os.path.join(BASE_DIR, "jump_box_monitor.pid")
+
+
+def _validate_no_pid_exists() -> None:
+    if os.path.exists(_get_full_pid_file_path()):
+        raise PIDFileExistsException("pid file exists")
+
+def create_pid_file() -> None:
+    """ Raises PIDFileExistsException if a pid file is found.
+        Creates pid file if none exists
+    """
+    _validate_no_pid_exists()
+    with open(_get_full_pid_file_path(), 'w') as f:
+        f.write(str(os.getpid()))
+
+def remove_pid_file() -> None:
+    os.remove(_get_full_pid_file_path())
 
 
 if __name__ == "__main__":
@@ -263,12 +306,34 @@ if __name__ == "__main__":
     logger.addHandler(handler)
     logger.debug("logger created")
 
+    # Load config
+    try:
+        with open(CONFIG_FILE_PATH) as f:
+            config = json.load(f)
+        validate_config(config)
+    except IOError:
+        logger.error("could not find config file")
+        logger.error(traceback.format_exc())
+        raise
+    except InvalidConfigError:
+        logger.error("invalid config file")
+        logger.error(traceback.format_exc())
+        raise
+
+    # Create pid file right before calling main
+    try:
+        create_pid_file()
+    except PIDFileExistsException:
+        logger.error("found PID file, exiting")
+        raise
+
     # Call main method and log any errors.
     try:
-        main(logger)
+        main(logger, config)
     except Exception as e:
         logger.error(f"An Error Occured :(: {e}")
         logger.error(traceback.format_exc())
         raise
     finally:
+        # remove_pid_file()
         logger.debug("goodbye")
