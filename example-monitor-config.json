@@ -1,5 +1,12 @@
 {
     "max_memory_percent": 0.33,
     "max_cpu_percent": 0.45,
-    "max_disk_percent": 0.33
+    "max_disk_percent": 0.33,
+    "user_names_to_ignore": [
+        "root"
+    ],
+    "process_names_to_ignore": [
+        "systemd",
+        "sshd"
+    ]
 }

@@ -4,6 +4,7 @@
 
 from abc import ABC, abstractmethod
 import argparse
+import datetime
 import json
 import logging
 import hashlib
@@ -49,6 +50,12 @@ def validate_config(config: typing.Dict):
     _validate_percent_value(config['max_memory_percent'], 'max_memory_percent')
     _validate_percent_value(config['max_cpu_percent'], 'max_cpu_percent')
     _validate_percent_value(config['max_disk_percent'], 'max_disk_percent')
+
+    if "user_names_to_ignore" not in config or not isinstance(config['user_names_to_ignore'], list):
+        raise InvalidConfigError(f'expected field user_names_to_ignore to be a list')
+
+    if "process_names_to_ignore" not in config or not isinstance(config['process_names_to_ignore'], list):
+        raise InvalidConfigError(f'expected field process_names_to_ignore to be a list')
 
 
 # # Data caching logic # # # # # #
@@ -114,14 +121,25 @@ class ResourceNames:
 class BaseAlert(ABC):
 
     alert_type = NotImplemented
+    notice_fields = NotImplemented
 
     @abstractmethod
     def to_key_name(self) -> str:
         pass
 
+    def to_email_string(self) -> str:
+        parts = ["*** *** *** *** *** ***"]
+        for field in self.notice_fields:
+            parts.append(f"{field}: {getattr(self, field)}")
+        return "\n".join(parts)
+
 class SystemResourceUsageAlert(BaseAlert):
 
     alert_type = AlertType.RESOURCES
+    notice_fields = [
+        'resource_name',
+        'resource_usage_percent',
+    ]
 
     def __init__(
         self,
@@ -141,34 +159,34 @@ class SystemResourceUsageAlert(BaseAlert):
 class ProcessAlert(BaseAlert):
 
     alert_type = AlertType.PROCESSES
+    notice_fields = [
+        'process_id',
+        'user_uid',
+        'user_name',
+        'command',
+        'priority',
+        'created_at',
+    ]
 
     def __init__(
         self,
         process_id: str,
         user_uid: int,
+        user_name: str,
         command: str,
-        age_seconds: int,
-        memory_usage_mb: str,
-        cpu_usage_percent: str,
+        priority: str,
+        created_at: str,
     ):
         self.process_id = process_id
         self.user_uid = user_uid
-        self.user_name = None
+        self.user_name = user_name
         self.command = command
-        self.age_seconds = age_seconds
-        self.memory_usage_mb = memory_usage_mb
-        self.cpu_usage_percent = cpu_usage_percent
+        self.priority = priority
+        self.created_at = created_at
 
-        self.enrich()
-
-    def enrich(self):
-        try:
-            self.user_name = run_shell_command("id", "-nu", str(self.user_uid))
-        except ShellError:
-            self.user_name = "UNKNOWN"
 
     def to_key_name(self):
-        return md5sum(f"{self.process_id}-{self.user_uid}")
+        return md5sum(f"{self.process_id}-{self.user_uid}-{self.command}")
 
     def __str__(self):
         return f"<ProcessAlert pid{self.process_id} uid{self.user_uid}>"
@@ -216,8 +234,23 @@ def get_system_resource_usage_alerts(logger, config) -> typing.List[SystemResour
 def get_processes_alerts(logger, config) -> typing.List[ProcessAlert]:
     alerts = []
     for proc in psutil.process_iter():
-        pid = proc.pid
-        username = proc.username()
+        with proc.oneshot():
+            pid = proc.pid
+            user_uid = proc.uids().real
+            user_name = proc.username()
+            command = f"{proc.name()} ({proc.exe()})"
+            created_at =  datetime.datetime.fromtimestamp(proc.create_time()).strftime("%Y-%m-%d %H:%M:%S")
+            priority = proc.nice()
+
+        if user_name in config['user_names_to_ignore']:
+            continue
+        if proc.name() in config['process_names_to_ignore']:
+            continue
+
+        logger.warning(f"creating alert for process")
+        alerts.append(ProcessAlert(
+            pid, user_uid, user_name, command, priority, created_at
+        ))
 
     return alerts
 
@@ -257,6 +290,7 @@ def main(logger: logging.Logger, config: typing.Dict) -> None:
 
         if send_alert:
             logger.warning(f" **** SENDING ALERT **** {alert}")
+            print(alert.to_email_string())
 
 
 # Manage pid file
