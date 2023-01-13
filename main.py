@@ -128,9 +128,10 @@ class BaseAlert(ABC):
         pass
 
     def to_email_string(self) -> str:
-        parts = ["*** *** *** *** *** ***"]
+        parts = []
         for field in self.notice_fields:
             parts.append(f"{field}: {getattr(self, field)}")
+        parts.append("*** *** *** *** *** ***")
         return "\n".join(parts)
 
 class SystemResourceUsageAlert(BaseAlert):
