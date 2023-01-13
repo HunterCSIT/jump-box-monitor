@@ -23,13 +23,12 @@ import uuid
 import psutil
 
 
-
+# Script constants & Settings
 BASE_DIR = pathlib.Path(__file__).parent.absolute()
 DATA_DIR = os.path.join(BASE_DIR, "data")
 REPORTS_DIR = os.path.join(BASE_DIR, "reports")
 PROD_LOG_PATH = os.path.join(BASE_DIR, "warnings.log")
 CONFIG_FILE_PATH = os.path.join(BASE_DIR, "monitor-config.json")
-
 ALERT_SNOOZE_TIME_SECONDS = 60 * 60 * 6
 
 
@@ -334,6 +333,7 @@ def main(logger: logging.Logger, config: typing.Dict) -> None:
             message_text.append(alert.to_email_string())
 
     if len(message_text):
+        # Send messages
         if "discord_bot" in config:
             logger.debug("sending discord message")
             chunk_size = 10
