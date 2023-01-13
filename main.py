@@ -335,5 +335,5 @@ if __name__ == "__main__":
         logger.error(traceback.format_exc())
         raise
     finally:
-        # remove_pid_file()
+        remove_pid_file()
         logger.debug("goodbye")
