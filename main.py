@@ -264,7 +264,10 @@ def get_processes_alerts(logger, config) -> typing.List[ProcessAlert]:
         if user_name in config['user_names_to_ignore']:
             continue
         if proc.name() in config['process_names_to_ignore']:
-            continue
+            if priority >= 0:
+                # We expect this to be 0 or higher.
+                # if < 0 then process has elevated priority
+                continue
 
         logger.warning(f"creating alert for process")
         alerts.append(ProcessAlert(
@@ -334,7 +337,7 @@ def main(logger: logging.Logger, config: typing.Dict) -> None:
 
     if len(message_text):
         # Send messages
-        if "discord_bot" in config:
+        if "discord_bot" in config and not config['discord_bot'].get("skip"):
             logger.debug("sending discord message")
             chunk_size = 10
             for i in range(0, len(message_text), chunk_size):
