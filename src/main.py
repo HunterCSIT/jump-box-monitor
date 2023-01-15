@@ -105,7 +105,6 @@ class BaseAlert(ABC):
         parts = []
         for field in self.notice_fields:
             parts.append(f"{field}: {getattr(self, field)}")
-        parts.append("*** *** *** *** *** ***")
         return "\n".join(parts)
 
 class SystemResourceUsageAlert(BaseAlert):
@@ -273,23 +272,36 @@ def main(logger: logging.Logger, config: typing.Dict) -> None:
             message_text.append(alert.to_email_string())
 
     if len(message_text):
+        file_report_path = os.path.join(REPORTS_DIR, str(uuid.uuid4()) + ".report")
         # Send messages
         if "discord_bot" in config and not config['discord_bot'].get("skip"):
             logger.debug("sending discord message")
-            chunk_size = 10
-            for i in range(0, len(message_text), chunk_size):
+            max_discord_messages = 5
+            chunk_size = 12
+            for ix, i in enumerate(range(0, len(message_text), chunk_size)):
+                if i > 0:
+                    time.sleep(1.5)
                 create_discord_message(
-                    "***************\n".join(message_text[i: i+chunk_size]),
+                    "\n\n".join(message_text[i: i+chunk_size]),
                     config['discord_bot']['bot_token'],
                     config['discord_bot']['channel_id'],
                 )
-                time.sleep(1.5)
+                if ix >= max_discord_messages:
+                    # write the rest to disk
+                    logger.debug("creating incident report file")
+                    with open(file_report_path, "w") as f:
+                        f.write("\n\n".join(message_text[i+chunk_size:]))
+                    create_discord_message(
+                        "Additional indicent details written to " + file_report_path,
+                        config['discord_bot']['bot_token'],
+                        config['discord_bot']['channel_id'],
+                    )
+                    break
+
         else:
             logger.debug("creating incident report file")
-            file_path = os.path.join(REPORTS_DIR, str(uuid.uuid4()))
-            with open(file_path, "w") as f:
-                f.write("***************\n".join(message_text))
-
+            with open(file_report_path, "w") as f:
+                f.write("\n\n".join(message_text))
 
 
 if __name__ == "__main__":
