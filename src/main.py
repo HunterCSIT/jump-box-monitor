@@ -285,6 +285,7 @@ def main(logger: logging.Logger, config: typing.Dict) -> None:
                     "\n\n".join(message_text[i: i+chunk_size]),
                     config['discord_bot']['bot_token'],
                     config['discord_bot']['channel_id'],
+                    logger,
                 )
                 if ix >= max_discord_messages:
                     # write the rest to disk
@@ -295,6 +296,7 @@ def main(logger: logging.Logger, config: typing.Dict) -> None:
                         "Additional indicent details written to " + file_report_path,
                         config['discord_bot']['bot_token'],
                         config['discord_bot']['channel_id'],
+                        logger,
                     )
                     break
 
@@ -302,6 +304,9 @@ def main(logger: logging.Logger, config: typing.Dict) -> None:
             logger.debug("creating incident report file")
             with open(file_report_path, "w") as f:
                 f.write("\n\n".join(message_text))
+
+    else:
+        logger.warning("no messages to send")
 
 
 if __name__ == "__main__":

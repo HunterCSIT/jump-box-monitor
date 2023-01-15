@@ -10,5 +10,5 @@ REPORTS_DIR = os.path.join(BASE_DIR, "reports")
 PROD_LOG_PATH = os.path.join(BASE_DIR, "warnings.log")
 CONFIG_FILE_PATH = os.path.join(BASE_DIR, "monitor-config.json")
 ALERT_SNOOZE_TIME_SECONDS = 60 * 60 * 6
-
+HTTP_TIMEOUT_SECONDS = 3
 

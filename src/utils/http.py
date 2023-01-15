@@ -3,13 +3,20 @@ import json
 import typing
 import urllib.request
 
+from constants import HTTP_TIMEOUT_SECONDS
 
-def http_post(url: str, data: typing.Dict, headers: typing.Dict = {}):
-    req = urllib.request.Request(url)
-    for k, v in headers.items():
-        req.add_header(k, v)
-    jsondata = json.dumps(data)
-    jsondataasbytes = jsondata.encode('utf-8') # needs to be bytes
-    req.add_header('Content-Type', 'application/json')
-    req.add_header('Content-Length', len(jsondataasbytes))
-    return urllib.request.urlopen(req, jsondataasbytes)
+
+def http_post_with_json(url: str, data: typing.Dict, headers: typing.Dict = {}):
+    payload = json.dumps(data).encode('utf-8')
+    return urllib.request.urlopen(
+        urllib.request.Request(
+            url,
+            headers={
+                'Content-Type': 'application/json',
+                'Content-Length': len(payload),
+                **headers,
+            }
+        ),
+        data=payload,
+        timeout=HTTP_TIMEOUT_SECONDS,
+    )
