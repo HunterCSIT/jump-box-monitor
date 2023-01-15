@@ -1,35 +1,38 @@
 
-#!/usr/bin/python3
-
-
 from abc import ABC, abstractmethod
 import argparse
 import datetime
 import json
 import logging
-import hashlib
 import itertools
 import os
 import os.path
-import pathlib
-import subprocess
-import sys
 import time
 import traceback
 import typing
-import urllib.request
 import uuid
 
 import psutil
 
-
-# Script constants & Settings
-BASE_DIR = pathlib.Path(__file__).parent.absolute()
-DATA_DIR = os.path.join(BASE_DIR, "data")
-REPORTS_DIR = os.path.join(BASE_DIR, "reports")
-PROD_LOG_PATH = os.path.join(BASE_DIR, "warnings.log")
-CONFIG_FILE_PATH = os.path.join(BASE_DIR, "monitor-config.json")
-ALERT_SNOOZE_TIME_SECONDS = 60 * 60 * 6
+from constants import (
+    REPORTS_DIR,
+    CONFIG_FILE_PATH,
+    ALERT_SNOOZE_TIME_SECONDS,
+)
+from utils.data_cache import (
+    read_saved_value,
+    write_saved_value,
+    DataCacheMissError,
+    DataCacheKeyExpired,
+)
+from utils.discord import create_discord_message
+from utils.logger import spawn_logger
+from utils.pid import (
+    create_pid_file,
+    remove_pid_file,
+    PIDFileExistsException,
+)
+from utils.helpers import md5sum
 
 
 # Config validation
@@ -76,54 +79,7 @@ def validate_config(config: typing.Dict):
                 "discord_bot object contains invalid key bot_token"
             )
 
-# # Data caching logic # # # # # #
 
-def md5sum(value: str):
-    return hashlib.md5(value.encode()).hexdigest()
-
-def now_ts() -> int:
-    return round(time.time())
-
-class DataCacheMissError(Exception):
-    pass
-
-class DataCacheKeyExpired(Exception):
-    pass
-
-def read_saved_value(key: str):
-    data_file_path = os.path.join(DATA_DIR, key)
-    try:
-        with open(data_file_path) as f:
-            data = json.load(f)
-    except IOError as e:
-        raise DataCacheMissError from e
-    if data.get("expired_at"):
-        if data["expired_at"] < now_ts():
-            os.remove(data_file_path)
-            raise DataCacheKeyExpired()
-    return data['payload']
-
-def write_saved_value(
-    key: str,
-    value: typing.Any,
-    ttl_seconds: typing.Union[None, int]
-):
-    data = {'payload': value}
-    if ttl_seconds is not None:
-        data['expired_at'] = now_ts() + ttl_seconds
-    with open(os.path.join(DATA_DIR, key), "w") as f:
-        json.dump(data, f)
-
-
-# Shell Command Runner
-class ShellError(Exception):
-    pass
-def run_shell_command(*command_parts):
-    try:
-        result = subprocess.run(command_parts, capture_output=True, check=True)
-    except subprocess.CalledProcessError as e:
-        raise ShellError from e
-    return result.stdout.decode().strip("\n")
 
 # Alert type definitions # # # # # #
 
@@ -277,25 +233,6 @@ def get_processes_alerts(logger, config) -> typing.List[ProcessAlert]:
     return alerts
 
 
-def http_post(url: str, data: typing.Dict, headers: typing.Dict = {}):
-    req = urllib.request.Request(url)
-    for k, v in headers.items():
-        req.add_header(k, v)
-    jsondata = json.dumps(data)
-    jsondataasbytes = jsondata.encode('utf-8') # needs to be bytes
-    req.add_header('Content-Length', len(jsondataasbytes))
-    return urllib.request.urlopen(req, jsondataasbytes)
-
-def create_discord_message(message: str, bot_token: str, channel_id: str):
-    url = f"https://discordapp.com/api/channels/{channel_id}/messages"
-    headers = {
-        "Authorization": f"Bot {bot_token}",
-        "User-Agent": "myBotThing (http://some.url, v0.1)",
-        "Content-Type": "application/json"
-    }
-    payload = {"content": message}
-    http_post(url, payload, headers=headers)
-
 
 # # # Script Entry Point # # # # # # # # #
 
@@ -354,29 +291,6 @@ def main(logger: logging.Logger, config: typing.Dict) -> None:
                 f.write("***************\n".join(message_text))
 
 
-# Manage pid file
-class PIDFileExistsException(Exception):
-    pass
-
-def _get_full_pid_file_path() -> str:
-    return os.path.join(BASE_DIR, "jump_box_monitor.pid")
-
-
-def _validate_no_pid_exists() -> None:
-    if os.path.exists(_get_full_pid_file_path()):
-        raise PIDFileExistsException("pid file exists")
-
-def create_pid_file() -> None:
-    """ Raises PIDFileExistsException if a pid file is found.
-        Creates pid file if none exists
-    """
-    _validate_no_pid_exists()
-    with open(_get_full_pid_file_path(), 'w') as f:
-        f.write(str(os.getpid()))
-
-def remove_pid_file() -> None:
-    os.remove(_get_full_pid_file_path())
-
 
 if __name__ == "__main__":
 
@@ -386,20 +300,8 @@ if __name__ == "__main__":
     parser.add_argument('-p', '--production', action='store_true')
     args = parser.parse_args()
 
-    # Assemble logger instance
-    logger = logging.getLogger("jump-box-monitor")
-    logger.setLevel(logging.DEBUG)
-    if args.production:
-        handler = logging.FileHandler(PROD_LOG_PATH, mode="a")
-        handler.setLevel(logging.WARN)
-        formatting = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
-        handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s: %(message)s'))
-    else:
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setLevel(logging.DEBUG)
-        handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s: %(message)s'))
-    logger.addHandler(handler)
-    logger.debug("logger created")
+    logger = spawn_logger(args.production)
+
 
     # Load config
     try:
