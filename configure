@@ -1,3 +1,11 @@
 #!/bin/bash
 
+# create new config file from the example config
 cp example-monitor-config.json monitor-config.json
+
+# Set ownership and permissions such that
+# only root can access the config file.
+chown root:root monitor-config.json
+chmod 600 monitor-config.json
+
+echo "***file created*** $(ls -l | grep ' monitor-config.json')"
